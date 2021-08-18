@@ -26,16 +26,11 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from PyQt5.QtCore import pyqtSignal
 from qgis.core import Qgis, QgsProject, QgsProviderRegistry
 from qgis.gui import QgisInterface
-from qgis.PyQt.QtCore import QDir, Qt
-from qgis.PyQt.QtWidgets import (
-    QApplication,
-    QDialog,
-    QDialogButtonBox,
-    QMessageBox,
-    QWidget,
-)
+from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtWidgets import QApplication, QMessageBox, QWidget
 from qgis.PyQt.uic import loadUiType
 
 from qfieldsync.core.cloud_api import (
@@ -54,14 +49,14 @@ from qfieldsync.libqfieldsync.utils.file_utils import (
 )
 from qfieldsync.utils.qgis_utils import get_qgis_files_within_dir
 
-from ..utils.qt_utils import make_folder_selector
-
-DialogUi, _ = loadUiType(
-    os.path.join(os.path.dirname(__file__), "../ui/cloud_converter_dialog.ui")
+WidgetUi, _ = loadUiType(
+    os.path.join(os.path.dirname(__file__), "../ui/cloud_create_project_widget.ui")
 )
 
 
-class CloudConverterDialog(QDialog, DialogUi):
+class CloudConverterDialog(QWidget, WidgetUi):
+    finished = pyqtSignal()
+
     def __init__(
         self,
         iface: QgisInterface,
@@ -86,49 +81,18 @@ class CloudConverterDialog(QDialog, DialogUi):
         else:
             self.network_manager.projects_cache.refresh()
 
-        project_name = self.project.baseName()
-        if project_name:
-            pattern = re.compile(r"[\W_]+")
-            project_name = pattern.sub("", project_name)
-        else:
-            project_name = "CloudProject"
+        self.nextButton.clicked.connect(self.on_next_button_clicked)
+        self.backButton.clicked.connect(self.on_back_button_clicked)
+        self.createButton.clicked.connect(self.on_cloudify_button_clicked)
 
-        project_name = self.network_manager.projects_cache.get_unique_name(project_name)
+    def restart(self):
+        self.stackedWidget.setCurrentWidget(self.selectTypePage)
 
-        self.mProjectName.setText(project_name)
-        self.button_box.button(QDialogButtonBox.Save).setText(self.tr("Create"))
-        self.button_box.button(QDialogButtonBox.Save).clicked.connect(
-            self.convert_project
-        )
-
-        self.projectGroupBox.setVisible(True)
-        self.progressGroupBox.setVisible(False)
-
-        self.setup_gui()
-
-    def setup_gui(self):
-        """Populate gui and connect signals of the push dialog"""
-        project_filename = QgsProject.instance().fileName()
-        export_dirname = Path(self.qfield_preferences.value("cloudDirectory")).joinpath(
-            fileparts(project_filename)[1] if project_filename else "new_cloud_project"
-        )
-        export_dirname = get_unique_empty_dirname(export_dirname)
-
-        self.exportDirLineEdit.setText(QDir.toNativeSeparators(str(export_dirname)))
-        self.exportDirButton.clicked.connect(
-            make_folder_selector(self.exportDirLineEdit)
-        )
-        self.update_info_visibility()
-
-    def get_export_folder_from_dialog(self):
-        """Get the export folder according to the inputs in the selected"""
-        return self.exportDirLineEdit.text()
-
-    def convert_project(self):
+    def cloudify_project(self):
         assert self.network_manager.projects_cache.projects
 
         for cloud_project in self.network_manager.projects_cache.projects:
-            if cloud_project.name == self.mProjectName.text():
+            if cloud_project.name == self.get_cloud_project_name():
                 QMessageBox.warning(
                     None,
                     self.tr("Warning"),
@@ -138,7 +102,7 @@ class CloudConverterDialog(QDialog, DialogUi):
                 )
                 return
 
-        if get_qgis_files_within_dir(self.exportDirLineEdit.text()):
+        if get_qgis_files_within_dir(self.dirnameLineEdit.text()):
             QMessageBox.warning(
                 None,
                 self.tr("Warning"),
@@ -150,17 +114,13 @@ class CloudConverterDialog(QDialog, DialogUi):
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        self.button_box.setEnabled(False)
-        self.projectGroupBox.setVisible(False)
-        self.progressGroupBox.setVisible(True)
+        self.stackedWidget.setCurrentWidget(self.progressPage)
 
         if not self.project.title():
             self.project.setTitle(self.get_cloud_project_name())
             self.project.setDirty()
 
-        cloud_convertor = CloudConverter(
-            self.project, self.get_export_folder_from_dialog()
-        )
+        cloud_convertor = CloudConverter(self.project, self.dirnameLineEdit.text())
 
         cloud_convertor.warning.connect(self.on_show_warning)
         cloud_convertor.total_progress_updated.connect(self.on_update_total_progressbar)
@@ -180,9 +140,13 @@ class CloudConverterDialog(QDialog, DialogUi):
 
     def get_cloud_project_name(self) -> str:
         pattern = re.compile(r"[\W_]+")
-        return pattern.sub("", self.mProjectName.text())
+        return pattern.sub("", self.projectNameLineEdit.text())
 
     def create_cloud_project(self):
+        if not self.project.title():
+            self.project.setTitle(self.get_cloud_project_name())
+            self.project.setDirty()
+
         reply = self.network_manager.create_project(
             self.get_cloud_project_name(),
             self.network_manager.auth().config("username"),
@@ -205,7 +169,7 @@ class CloudConverterDialog(QDialog, DialogUi):
 
         # save `local_dir` configuration permanently, `CloudProject` constructor does this for free
         cloud_project = CloudProject(
-            {**payload, "local_dir": self.get_export_folder_from_dialog()}
+            {**payload, "local_dir": self.dirnameLineEdit.text()}
         )
 
         self.cloud_transferrer = CloudTransferrer(self.network_manager, cloud_project)
@@ -224,7 +188,7 @@ class CloudConverterDialog(QDialog, DialogUi):
             "Finished converting the project to QFieldCloud, you are now view its locally stored copy."
         )
         self.iface.messageBar().pushMessage(result_message, Qgis.Success, 0)
-        self.close()
+        self.finished.emit()
 
     def update_info_visibility(self):
         """
@@ -266,6 +230,19 @@ class CloudConverterDialog(QDialog, DialogUi):
             self.infoLocalizedPresentLabel.setVisible(False)
         self.infoGroupBox.setVisible(len(localizedDataPathLayers) > 0)
 
+    def get_unique_project_name(self, project: QgsProject) -> str:
+        project_name = project.baseName()
+        if not project_name:
+            project_name = "CloudProject"
+
+        pattern = re.compile(r"[\W_]+")
+        project_name = pattern.sub("", project_name)
+        project_name = (
+            self.network_manager.projects_cache.get_unique_name(project_name) or ""
+        )
+
+        return project_name
+
     def on_update_total_progressbar(self, current, layer_count, message):
         self.totalProgressBar.setMaximum(layer_count)
         self.totalProgressBar.setValue(current)
@@ -279,3 +256,36 @@ class CloudConverterDialog(QDialog, DialogUi):
 
     def on_show_warning(self, _, message):
         self.iface.messageBar().pushMessage(message, Qgis.Warning, 0)
+
+    def on_next_button_clicked(self) -> None:
+        if self.cloudifyRadioButton.isChecked():
+            self.stackedWidget.setCurrentWidget(self.projectDetailsPage)
+        elif self.createCloudRadioButton.isChecked():
+            self.stackedWidget.setCurrentWidget(self.projectDetailsPage)
+
+        project_name = self.get_unique_project_name(self.project)
+        self.projectNameLineEdit.setText(project_name)
+        self.projectDescriptionTextEdit.setText(self.project.metadata().abstract())
+
+        project_filename = (
+            project_name.lower()
+            if project_name
+            else fileparts(QgsProject.instance().fileName())[1]
+        )
+        export_dirname = get_unique_empty_dirname(
+            Path(self.qfield_preferences.value("cloudDirectory")).joinpath(
+                project_filename
+            )
+        )
+        self.dirnameLineEdit.setText(str(export_dirname))
+
+        self.update_info_visibility()
+
+    def on_back_button_clicked(self):
+        self.stackedWidget.setCurrentWidget(self.selectTypePage)
+
+    def on_cloudify_button_clicked(self):
+        if self.cloudifyRadioButton.isChecked():
+            self.cloudify_project()
+        elif self.createCloudRadioButton.isChecked():
+            self.create_cloud_project()

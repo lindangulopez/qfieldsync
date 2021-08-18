@@ -138,9 +138,9 @@ class CloudProjectsDialog(QDialog, CloudProjectsDialogUi):
         self.projectsType.setCurrentIndex(0)
         self.projectsType.currentIndexChanged.connect(lambda: self.show_projects())
 
-        self.projectsTable.setColumnWidth(0, self.projectsTable.width() / 2)
-        self.projectsTable.setColumnWidth(1, self.projectsTable.width() / 3.25)
-        self.projectsTable.setColumnWidth(2, self.projectsTable.width() / 10)
+        self.projectsTable.setColumnWidth(0, int(self.projectsTable.width() / 2))
+        self.projectsTable.setColumnWidth(1, int(self.projectsTable.width() / 3.25))
+        self.projectsTable.setColumnWidth(2, int(self.projectsTable.width() / 10))
 
         self.synchronizeButton.clicked.connect(
             lambda: self.on_project_sync_button_clicked()
@@ -159,11 +159,20 @@ class CloudProjectsDialog(QDialog, CloudProjectsDialogUi):
         )
         self.deleteButton.setEnabled(False)
 
+        self.projectsStack.setCurrentWidget(self.projectsListPage)
+        self.createProjectWidget = CloudConverterDialog(
+            iface,
+            self.network_manager,
+            QgsProject.instance(),
+            self,
+        )
+        self.projectCreatePage.layout().addWidget(self.createProjectWidget)
+
         self.refreshButton.setIcon(QgsApplication.getThemeIcon("/mActionRefresh.svg"))
         self.refreshButton.clicked.connect(lambda: self.on_refresh_button_clicked())
 
         self.createButton.clicked.connect(lambda: self.on_create_button_clicked())
-        self.convertButton.clicked.connect(lambda: self.on_convert_button_clicked())
+        # self.convertButton.clicked.connect(lambda: self.on_convert_button_clicked())
         self.backButton.clicked.connect(lambda: self.on_back_button_clicked())
         self.submitButton.clicked.connect(lambda: self.on_submit_button_clicked())
         self.projectsTable.cellDoubleClicked.connect(
@@ -870,8 +879,11 @@ class CloudProjectsDialog(QDialog, CloudProjectsDialogUi):
 
     def on_create_button_clicked(self) -> None:
         self.projectsTable.clearSelection()
-        self.current_cloud_project = None
-        self.show_project_form()
+        # self.current_cloud_project = None
+        self.projectsStack.setCurrentWidget(self.projectCreatePage)
+        self.createProjectWidget.restart()
+        # self.projectCreatePage.setWidget()
+        # self.show_project_form()
 
     def on_convert_button_clicked(self) -> None:
         if QgsProject.instance().mapLayers():
@@ -1093,9 +1105,11 @@ class CloudProjectsDialog(QDialog, CloudProjectsDialogUi):
             self.network_manager.projects_cache.currently_open_project
             or self.network_manager.projects_cache.is_currently_open_project_cloud_local
         ):
-            self.convertButton.setEnabled(False)
+            pass
+            # self.convertButton.setEnabled(False)
         else:
-            self.convertButton.setEnabled(True)
+            pass
+            # self.convertButton.setEnabled(True)
 
     def update_project_table_selection(self) -> None:
         font = QFont()
